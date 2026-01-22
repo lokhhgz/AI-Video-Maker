@@ -67,14 +67,13 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (產生語音檔案) - 改回最穩定的「存檔」模式
+# 🗣️ TTS (產生語音檔案) - 這是最穩定的核心
 def run_tts_sync(text, filename, voice, rate):
     async def _tts():
         communicate = edge_tts.Communicate(text, voice, rate=rate)
         await communicate.save(filename)
     
     try:
-        # 建立全新的事件迴圈，避免 Streamlit 衝突
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_tts())
@@ -113,7 +112,6 @@ with st.sidebar:
     gemini_key = gemini_input if gemini_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_input if pexels_input else st.secrets.get("PEXELS_KEY", "")
     
-    # 這裡顯示綠色打勾
     if gemini_key:
         st.success("✅ Gemini Key Ready")
     else:
@@ -138,25 +136,30 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 側邊欄快速試聽按鈕 (已修復)
+    # 🔊 側邊欄快速試聽按鈕 (【關鍵修復】)
     if st.button("🔊 Test Voice Now"):
-        test_file = "preview_test.mp3"
+        test_file = "preview_temp.mp3"
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
-        test_text = "Hello! This is a test. How do I sound?"
+        test_text = "Hello! This is a test for your AI video. Everything is working fine."
         
-        # 1. 刪除舊檔 (避免讀到舊的)
+        # 1. 刪除舊檔
         if os.path.exists(test_file):
             os.remove(test_file)
             
         # 2. 生成新檔
         success = run_tts_sync(test_text, test_file, voice_role, rate_str)
         
-        # 3. 播放
+        # 3. 【關鍵步驟】讀取成 Bytes 再餵給播放器
         if success and os.path.exists(test_file):
-            st.audio(test_file, format="audio/mp3")
+            with open(test_file, "rb") as f:
+                audio_bytes = f.read()
+            st.audio(audio_bytes, format="audio/mp3")
             st.caption("☝️ Preview of current settings")
+            
+            # 播放完刪除 (保持清潔)
+            os.remove(test_file)
         else:
-            st.error("❌ Audio generation failed.")
+            st.error("❌ Audio generation failed. Please check internet connection.")
 
     st.divider()
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
@@ -209,7 +212,7 @@ if st.session_state.script:
                 
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
                 
-                # 使用修復後的同步 TTS
+                # 使用同步 TTS
                 run_tts_sync(data['text'], a_file, voice_role, rate_str)
                 
                 try:
