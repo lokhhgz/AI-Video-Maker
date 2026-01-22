@@ -14,13 +14,14 @@ import numpy as np
 # ================= 設定區 =================
 st.set_page_config(page_title="AI Shorts Maker (Ultimate)", page_icon="🇺🇸")
 
-# 📉 解析度設定 (維持輕量化)
+# 📉 解析度設定 (維持輕量化以防長影片爆記憶體)
 VIDEO_W, VIDEO_H = 540, 960 
 
 # 🧠 AI 寫英文腳本
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
-    est_sentences = int(int(duration) / 5)
+    # 估算句子數量：長影片稍微減少密度，改為每 6 秒一句
+    est_sentences = int(int(duration) / 6)
     if est_sentences < 3: est_sentences = 3
     
     prompt = f"""
@@ -102,11 +103,9 @@ with st.sidebar:
     gemini_input = st.text_input("Gemini Key", type="password")
     pexels_input = st.text_input("Pexels Key", type="password")
     
-    # 優先使用輸入框，沒有才用 Secrets
     gemini_key = gemini_input if gemini_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_input if pexels_input else st.secrets.get("PEXELS_KEY", "")
     
-    # 狀態顯示 (綠色打勾)
     if gemini_key:
         st.success("✅ Gemini Key Ready")
     else:
@@ -131,7 +130,6 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 側邊欄快速試聽按鈕
     if st.button("🔊 Test Voice Now"):
         test_text = "Hello! This is a test. How do I sound?"
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
@@ -144,11 +142,11 @@ with st.sidebar:
         st.caption("☝️ Preview of current settings")
 
     st.divider()
-    duration = st.slider("Duration (sec)", 15, 60, 30, 5)
+    # ✨ 這裡改成 300 秒了！
+    duration = st.slider("Duration (sec)", 15, 300, 30, 5)
 
 # --- 右側主畫面 ---
 
-# 初始化
 if "script" not in st.session_state:
     st.session_state.script = None
 
@@ -191,6 +189,7 @@ if st.session_state.script:
                 v_file = f"v_{i}_{clean_kw}.mp4"
                 a_file = f"a_{i}.mp3"
                 
+                # 下載與語音
                 download_video(pexels_key, data['keyword'], v_file)
                 
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
