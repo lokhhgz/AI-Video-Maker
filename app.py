@@ -13,36 +13,32 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 設定區 =================
-st.set_page_config(page_title="AI Shorts Maker (Final)", page_icon="🇺🇸")
+st.set_page_config(page_title="AI Shorts Maker (Perfect)", page_icon="🇺🇸")
 
 # 📉 解析度設定 (維持輕量化)
 VIDEO_W, VIDEO_H = 540, 960 
 
-# 🔤 字體設定 (關鍵修改：使用系統字體，保證能變大)
-def get_font(size=80):
-    # 1. 優先尋找 Streamlit Cloud 內建的 Linux 字體 (DejaVuSans)
-    # 這是最穩定的方法，不需要下載
+# 🔤 字體設定
+def get_font(size=40):
+    # 優先尋找 Linux 系統字體
     system_fonts = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "arial.ttf"
     ]
-    
     for path in system_fonts:
         if os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size)
             except:
                 continue
-                
-    # 2. 如果都沒有，才嘗試用預設 (雖然小，但至少不會崩潰)
     return ImageFont.load_default()
 
 # 🧠 AI 寫英文腳本
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
-    # 句數稍微減少，讓每句話停留久一點
-    est_sentences = int(int(duration) / 6)
+    # 句數計算
+    est_sentences = int(int(duration) / 5)
     if est_sentences < 3: est_sentences = 3
     
     prompt = f"""
@@ -89,7 +85,7 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (同步版) - 用於試聽與合成
+# 🗣️ TTS (同步版) - 核心引擎
 def run_tts_sync(text, filename, voice, rate):
     async def _tts():
         communicate = edge_tts.Communicate(text, voice, rate=rate)
@@ -104,25 +100,28 @@ def run_tts_sync(text, filename, voice, rate):
         print(f"TTS Error: {e}")
         return False
 
-# 🖼️ 製作超大字幕 (半透明黑底 + 自動換行)
+# 🖼️ 製作字幕 (修正版：大小適中，位置偏下)
 def create_subtitle(text, width, height):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 這裡設定字體大小：80 (非常大！)
-    font_size = 80
+    # 【修正 1】字體大小改為 40 (原本 80 太大了)
+    font_size = 40
     font = get_font(font_size)
     
-    # 自動換行：因為字變大了，所以每行字數要減少 (設為 15)
-    wrapped_lines = textwrap.wrap(text, width=15)
+    # 【修正 2】自動換行寬度增加 (一行可以塞更多字，不會變直排)
+    # 540px 寬度，字體 40px，大約每行可放 25-30 個字母
+    wrapped_lines = textwrap.wrap(text, width=28)
     
     # 計算高度
     line_height = font_size + 10
     total_height = len(wrapped_lines) * line_height
-    start_y = height - total_height - 150 # 靠下顯示
+    
+    # 【修正 3】位置設定：螢幕下方往上算 120px 處
+    # 這樣會剛好在「中間偏下」，又不會擋到底部
+    start_y = height - total_height - 120 
     
     for i, line in enumerate(wrapped_lines):
-        # 取得寬度
         try:
             line_w = draw.textlength(line, font=font)
         except:
@@ -131,11 +130,12 @@ def create_subtitle(text, width, height):
         x = (width - line_w) / 2
         y = start_y + (i * line_height)
         
-        # 畫半透明黑底 (讓字更明顯)
-        padding = 15
+        # 畫半透明黑底 (稍微圓潤一點的 Padding)
+        padding_x = 10
+        padding_y = 5
         draw.rectangle(
-            [x - padding, y - padding, x + line_w + padding, y + line_height - padding + 5], 
-            fill=(0, 0, 0, 160)
+            [x - padding_x, y - padding_y, x + line_w + padding_x, y + line_height - padding_y], 
+            fill=(0, 0, 0, 140) # 黑色半透明
         )
         
         # 畫白字
@@ -144,7 +144,7 @@ def create_subtitle(text, width, height):
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🇺🇸 AI Shorts Maker (Big Text)")
+st.title("🇺🇸 AI Shorts Maker (Perfect)")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -175,27 +175,30 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
-    # 🔊 快速試聽 (修復版：存檔再讀取)
+    # 🔊 快速試聽 (快取殺手版)
     if st.button("🔊 Test Voice Now"):
-        preview_file = "preview_test.mp3"
-        test_text = "Hello! This is a test. The subtitle is now much bigger."
+        # 生成一個隨機檔名，強迫瀏覽器重新讀取
+        rand_id = random.randint(1000, 9999)
+        preview_file = f"preview_{rand_id}.mp3"
+        
+        test_text = "Hello! This is the perfect subtitle size. I hope you like it!"
         rate_str = f"{int((rate - 1.0) * 100):+d}%"
         
-        # 1. 刪除舊檔
-        if os.path.exists(preview_file):
-            os.remove(preview_file)
-            
-        # 2. 生成新檔
+        # 清理舊檔案 (如果有其他殘留)
+        for f in os.listdir():
+            if f.startswith("preview_") and f.endswith(".mp3"):
+                try: os.remove(f)
+                except: pass
+
+        # 生成
         success = run_tts_sync(test_text, preview_file, voice_role, rate_str)
         
-        # 3. 讀取並播放 (最穩定的方法)
+        # 讀取並播放
         if success and os.path.exists(preview_file):
-            with open(preview_file, "rb") as f:
-                audio_bytes = f.read()
-            st.audio(audio_bytes, format="audio/mp3")
-            st.caption("☝️ Sound check successful!")
+            st.audio(preview_file, format="audio/mp3")
+            st.caption(f"☝️ Preview ID: {rand_id}")
         else:
-            st.error("❌ Audio failed.")
+            st.error("❌ Audio failed. Please check internet.")
 
     st.divider()
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
@@ -272,7 +275,7 @@ if st.session_state.script:
                     if a_clip:
                         v_clip = v_clip.set_audio(a_clip)
                     
-                    # 字幕 (現在是大字體！)
+                    # 字幕 (修正後)
                     txt_img = create_subtitle(data['text'], VIDEO_W, VIDEO_H)
                     txt_clip = ImageClip(txt_img).set_duration(final_dur)
                     
