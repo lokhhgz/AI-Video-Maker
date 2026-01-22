@@ -14,13 +14,12 @@ import numpy as np
 # ================= 設定區 =================
 st.set_page_config(page_title="AI Shorts Maker (Ultimate)", page_icon="🇺🇸")
 
-# 📉 解析度設定 (維持輕量化以防長影片爆記憶體)
+# 📉 解析度設定 (維持輕量化)
 VIDEO_W, VIDEO_H = 540, 960 
 
 # 🧠 AI 寫英文腳本
 def generate_script(api_key, topic, duration):
     genai.configure(api_key=api_key)
-    # 估算句子數量：長影片稍微減少密度，改為每 6 秒一句
     est_sentences = int(int(duration) / 6)
     if est_sentences < 3: est_sentences = 3
     
@@ -68,7 +67,7 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ TTS (產生語音檔案)
+# 🗣️ TTS (產生語音檔案) - 核心函式
 async def get_voice(text, voice, rate):
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     data = b""
@@ -76,6 +75,17 @@ async def get_voice(text, voice, rate):
         if chunk["type"] == "audio":
             data += chunk["data"]
     return data
+
+# 🔄 穩定的同步執行器 (解決試聽報錯的關鍵)
+def run_async_tts(text, voice, rate):
+    try:
+        # 嘗試使用標準 asyncio.run (最穩定)
+        return asyncio.run(get_voice(text, voice, rate))
+    except RuntimeError:
+        # 如果因為環境問題報錯 (Event loop is already running)，改用這種方式
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(get_voice(text, voice, rate))
 
 # 🖼️ 製作英文字幕
 def create_subtitle(text, width, height):
@@ -130,19 +140,24 @@ with st.sidebar:
     
     rate = st.slider("Speaking Speed", 0.5, 1.5, 1.0, 0.1)
     
+    # 🔊 側邊欄快速試聽按鈕 (已修復錯誤)
     if st.button("🔊 Test Voice Now"):
-        test_text = "Hello! This is a test. How do I sound?"
-        rate_str = f"{int((rate - 1.0) * 100):+d}%"
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        test_audio = loop.run_until_complete(get_voice(test_text, voice_role, rate_str))
-        
-        st.audio(test_audio, format="audio/mp3")
-        st.caption("☝️ Preview of current settings")
+        try:
+            test_text = "Hello! This is a test. How do I sound?"
+            rate_str = f"{int((rate - 1.0) * 100):+d}%"
+            
+            # 使用修復後的執行器
+            test_audio = run_async_tts(test_text, voice_role, rate_str)
+            
+            if test_audio and len(test_audio) > 0:
+                st.audio(test_audio, format="audio/mp3")
+                st.caption("☝️ Preview of current settings")
+            else:
+                st.error("❌ Audio generation failed (Empty data).")
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
 
     st.divider()
-    # ✨ 這裡改成 300 秒了！
     duration = st.slider("Duration (sec)", 15, 300, 30, 5)
 
 # --- 右側主畫面 ---
@@ -189,13 +204,12 @@ if st.session_state.script:
                 v_file = f"v_{i}_{clean_kw}.mp4"
                 a_file = f"a_{i}.mp3"
                 
-                # 下載與語音
                 download_video(pexels_key, data['keyword'], v_file)
                 
                 rate_str = f"{int((rate - 1.0) * 100):+d}%"
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                wav_data = loop.run_until_complete(get_voice(data['text'], voice_role, rate_str))
+                
+                # 使用修復後的執行器
+                wav_data = run_async_tts(data['text'], voice_role, rate_str)
                 with open(a_file, "wb") as f:
                     f.write(wav_data)
                 
