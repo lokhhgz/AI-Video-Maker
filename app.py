@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短影音工廠 (診斷模式)", page_icon="🛠️")
+st.set_page_config(page_title="AI 短影音工廠 (驗屍官模式)", page_icon="🕵️‍♂️")
 
 # 📥 自動下載中文字體
 def download_font():
@@ -32,43 +32,50 @@ def get_font(size=80):
         return ImageFont.truetype(font_path, size)
     return ImageFont.load_default()
 
-# 🧠 AI 寫腳本
+# 🧠 AI 寫腳本 (已更新模型清單)
 def generate_script_from_ai(api_key, topic, duration_sec):
     genai.configure(api_key=api_key)
+    
+    # 計算大約需要的句數 (每4.5秒一句)
     est_sentences = int(int(duration_sec) / 4.5)
     if est_sentences < 3: est_sentences = 3
     
+    # 這裡是你指定的新模型清單 (優先順序由上而下)
     models_to_try = [
         'gemini-2.0-flash', 
         'gemini-flash-latest', 
         'gemini-pro-latest', 
         'gemini-2.0-flash-lite',
         'gemini-1.5-flash-latest'
-        ]
+    ]
     
     for model_name in models_to_try:
         try:
+            print(f"嘗試使用模型: {model_name}...") # 方便你在後台看是用哪個模型
             model = genai.GenerativeModel(model_name)
             prompt = f"""
             你是一個短影音腳本專家。請根據主題「{topic}」寫出一個短影音腳本。
             【規格】：影片長度 {duration_sec} 秒，請提供 {est_sentences} 個分鏡句子。
             【要求】：每句 15-20 字，搭配一個英文搜尋單字 (Keyword)。
-            【格式】：請只回傳純 JSON 陣列，不要有 markdown 符號：
+            【格式】：請只回傳純 JSON 陣列，不要有 markdown 符號，也不要有多餘的解釋：
             [
                 {{"text": "第一句旁白...", "keyword": "Keyword1"}},
                 {{"text": "第二句旁白...", "keyword": "Keyword2"}}
             ]
             """
             response = model.generate_content(prompt)
+            # 清理可能出現的 markdown 符號
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
-        except:
-            continue
-    return None
+        except Exception as e:
+            print(f"模型 {model_name} 失敗: {e}")
+            continue # 如果失敗，就試下一個模型
+            
+    return None # 如果全部都失敗，回傳 None
 
-# 📥 下載影片 (診斷版：會報錯)
+# 📥 下載影片 (驗屍版：如果下載失敗會保存錯誤訊息)
 def download_video(api_key, query, filename):
-    if os.path.exists(filename) and os.path.getsize(filename) > 0:
+    if os.path.exists(filename) and os.path.getsize(filename) > 1000:
         return True
     
     url = "https://api.pexels.com/videos/search"
@@ -81,19 +88,22 @@ def download_video(api_key, query, filename):
             data = r.json()
             if data.get('videos'):
                 video_url = data['videos'][0]['video_files'][0]['link']
+                v_data = requests.get(video_url).content
                 with open(filename, 'wb') as f:
-                    f.write(requests.get(video_url).content)
+                    f.write(v_data)
                 return True
             else:
-                st.warning(f"⚠️ Pexels 找不到關於「{query}」的影片")
+                print(f"Pexels search empty for {query}")
         else:
-            # 【關鍵】顯示 API 錯誤代碼
-            st.error(f"❌ Pexels 下載失敗！狀態碼：{r.status_code} (若是 401 代表 Key 錯誤)")
+            print(f"Pexels error {r.status_code}")
+            # 把錯誤訊息寫進檔案，方便我們驗屍
+            with open(filename, 'w') as f:
+                f.write(f"ERROR_PEXELS_CODE_{r.status_code}")
     except Exception as e:
-        st.error(f"❌ Pexels 連線錯誤：{e}")
+        print(f"Download exception: {e}")
     return False
 
-# 🗣️ 生成語音 (診斷版)
+# 🗣️ 生成語音
 def run_tts(text, filename, voice, rate):
     rate_str = f"{int((rate - 1.0) * 100):+d}%"
     async def _tts():
@@ -107,7 +117,6 @@ def run_tts(text, filename, voice, rate):
         loop.close()
         return True
     except Exception as e:
-        st.error(f"❌ 語音生成失敗 ({text[:5]}...)：{e}")
         return False
 
 # 🖼️ 製作字幕圖片
@@ -116,7 +125,6 @@ def create_text_image(text, width, height):
     draw = ImageDraw.Draw(img)
     font = get_font(70)
     max_width = width * 0.85
-    
     lines, current_line = [], ""
     for char in text:
         if draw.textlength(current_line + char, font=font) <= max_width:
@@ -125,10 +133,8 @@ def create_text_image(text, width, height):
             lines.append(current_line)
             current_line = char
     lines.append(current_line)
-
     total_h = len(lines) * 80
     current_y = (height - total_h) / 2
-    
     for line in lines:
         w = draw.textlength(line, font=font)
         x = (width - w) / 2
@@ -140,7 +146,7 @@ def create_text_image(text, width, height):
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🛠️ AI 短影音工廠 (診斷模式)")
+st.title("🕵️‍♂️ AI 短影音工廠 (驗屍官模式)")
 
 download_font()
 
@@ -161,16 +167,9 @@ with st.sidebar:
     voice_option = st.selectbox("配音員", ("女聲 - 曉臻", "男聲 - 雲哲"))
     voice_role = "zh-TW-HsiaoChenNeural" if "女聲" in voice_option else "zh-TW-YunJheNeural"
     speech_rate = st.slider("語速調整", 0.5, 2.0, 1.0, 0.1)
-    
-    if st.button("🔊 試聽目前語音"):
-        preview_file = "preview.mp3"
-        if run_tts("這是一個語音試聽測試", preview_file, voice_role, speech_rate):
-            st.audio(preview_file)
-    
-    st.divider()
     duration = st.slider("影片目標長度 (秒)", 30, 300, 60, 10)
 
-topic = st.text_input("💡 請輸入影片主題", placeholder="例如：為什麼貓咪喜歡紙箱？")
+topic = st.text_input("💡 請輸入影片主題", placeholder="例如：吸塵器的起源")
 
 if st.button("🚀 開始生成影片", type="primary"):
     if not gemini_key or not pexels_key:
@@ -178,11 +177,11 @@ if st.button("🚀 開始生成影片", type="primary"):
     elif not topic:
         st.error("❌ 請輸入主題")
     else:
-        status = st.status("🧠 正在執行診斷程序...", expanded=True)
+        status = st.status("🧠 正在執行驗屍程序...", expanded=True)
         try:
             script_data = generate_script_from_ai(gemini_key, topic, duration)
             if not script_data:
-                status.update(label="❌ 劇本生成失敗 (Gemini Error)", state="error")
+                status.update(label="❌ 劇本生成失敗", state="error")
                 st.stop()
             
             status.write(f"✅ 劇本完成！共 {len(script_data)} 個分鏡")
@@ -190,27 +189,40 @@ if st.button("🚀 開始生成影片", type="primary"):
             clips = []
             
             for i, data in enumerate(script_data):
-                status.write(f"正在製作第 {i+1} 句：{data['text'][:10]}... (關鍵字: {data['keyword']})")
+                status.write(f"🔍 檢查第 {i+1} 句：{data['text'][:5]}...")
                 
                 safe_kw = "".join([c for c in data['keyword'] if c.isalnum()])
                 v_file = f"video_{safe_kw}.mp4"
                 a_file = f"temp_{i}.mp3"
                 
-                # 下載測試
-                if not download_video(pexels_key, data['keyword'], v_file):
-                    status.write("   ⚠️ 主素材下載失敗，嘗試備用素材...")
-                    if not download_video(pexels_key, "Abstract", "video_fallback.mp4"):
-                        st.error(f"   ❌ 嚴重錯誤：Pexels 無法下載任何影片，請檢查 Key。")
-                        continue
-                    v_file = "video_fallback.mp4"
+                # 1. 下載測試
+                download_video(pexels_key, data['keyword'], v_file)
                 
+                # 2. 【關鍵驗屍】檢查影片檔是不是壞的
+                if not os.path.exists(v_file):
+                     st.error(f"❌ 嚴重錯誤：影片檔 {v_file} 完全沒有被建立！")
+                     st.stop()
+                
+                file_size = os.path.getsize(v_file)
+                if file_size < 1000: # 如果檔案小於 1KB，絕對是壞的
+                    with open(v_file, 'r', errors='ignore') as f:
+                        content = f.read(100) # 偷看前100個字
+                    st.error(f"☠️ 影片檔案損毀！大小僅 {file_size} bytes。")
+                    st.error(f"📄 檔案內容寫著：{content}")
+                    if "401" in content or "Unauthorized" in content:
+                        st.error("👉 診斷結果：Pexels API Key 錯誤！請檢查金鑰。")
+                    elif "429" in content:
+                        st.error("👉 診斷結果：請求太頻繁，請稍後再試。")
+                    st.stop() # 停止程式，讓你看錯誤
+                
+                # 3. TTS 測試
+                run_tts(data['text'], a_file, voice_role, speech_rate)
+                if os.path.exists(a_file) and os.path.getsize(a_file) < 100:
+                     st.error("❌ 語音檔案生成失敗 (檔案過小)")
+                     st.stop()
+
+                # 4. 合成
                 try:
-                    # TTS 測試
-                    if not run_tts(data['text'], a_file, voice_role, speech_rate):
-                        st.error("   ❌ 語音生成失敗，跳過此片段")
-                        continue
-                    
-                    # 合成測試
                     v_clip = VideoFileClip(v_file).resize(newsize=(1080, 1920))
                     a_clip = AudioFileClip(a_file)
                     if a_clip.duration > v_clip.duration:
@@ -221,10 +233,10 @@ if st.button("🚀 開始生成影片", type="primary"):
                     v_clip = v_clip.set_audio(a_clip)
                     txt_clip = ImageClip(create_text_image(data['text'], 1080, 1920)).set_duration(a_clip.duration)
                     clips.append(CompositeVideoClip([v_clip, txt_clip]))
-                    status.write("   ✅ 片段製作成功")
                     
                 except Exception as e:
-                    st.error(f"   ❌ 合成階段報錯: {e}")
+                    st.error(f"❌ 合成報錯: {e}")
+                    st.stop()
                 
                 progress_bar.progress((i + 1) / len(script_data))
             
@@ -235,10 +247,6 @@ if st.button("🚀 開始生成影片", type="primary"):
                 final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
                 status.update(label="✨ 製作完成！", state="complete")
                 st.video(output_name)
-                with open(output_name, "rb") as file:
-                    st.download_button(label="⬇️ 下載影片", data=file, file_name=output_name, mime="video/mp4")
-            else:
-                status.update(label="❌ 製作失敗：所有片段都出錯了，請查看上方紅字", state="error")
                 
         except Exception as e:
-            st.error(f"系統崩潰錯誤: {e}")
+            st.error(f"系統錯誤: {e}")
