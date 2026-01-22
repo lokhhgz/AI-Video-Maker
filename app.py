@@ -6,8 +6,8 @@ import edge_tts
 import json
 import random
 import google.generativeai as genai
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, CompositeAudioClip
-from moviepy.audio.fx.all import audio_loop
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+# 雲端環境有時不需要 audio_loop 或寫法不同，為求穩定我們先用基本拼接
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
@@ -18,7 +18,6 @@ st.set_page_config(page_title="AI 短影音工廠", page_icon="🎬")
 def download_font():
     font_path = "NotoSansTC-Bold.otf"
     if not os.path.exists(font_path):
-        # 使用 Google Noto Sans 繁體中文黑體
         url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansTC-Bold.otf"
         try:
             r = requests.get(url)
@@ -28,7 +27,7 @@ def download_font():
             pass
     return font_path
 
-# 🕵️‍♂️ 取得字體 (優先使用下載的字體)
+# 🕵️‍♂️ 取得字體
 def get_font(size=80):
     font_path = "NotoSansTC-Bold.otf"
     if os.path.exists(font_path):
@@ -86,18 +85,25 @@ def download_video(api_key, query, filename):
         pass
     return False
 
-# 🗣️ 生成語音 (修復雲端 Asyncio 衝突)
+# 🗣️ 生成語音 (包含試聽功能的共用核心)
 def run_tts(text, filename, voice, rate):
+    # 轉換語速格式 (例如 1.2 -> +20%)
     rate_str = f"{int((rate - 1.0) * 100):+d}%"
+    
     async def _tts():
         communicate = edge_tts.Communicate(text, voice, rate=rate_str)
         await communicate.save(filename)
     
     # 【關鍵修復】使用 new_event_loop 避免與 Streamlit 衝突
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(_tts())
-    loop.close()
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_tts())
+        loop.close()
+        return True
+    except Exception as e:
+        print(f"TTS Error: {e}")
+        return False
 
 # 🖼️ 製作字幕圖片
 def create_text_image(text, width, height):
@@ -121,12 +127,10 @@ def create_text_image(text, width, height):
     for line in lines:
         w = draw.textlength(line, font=font)
         x = (width - w) / 2
-        
         # 描邊效果
         for adj in range(-2, 3):
              for adj2 in range(-2, 3):
                  draw.text((x+adj, current_y+adj2), line, font=font, fill="black")
-        
         draw.text((x, current_y), line, font=font, fill="white")
         current_y += 80
     
@@ -141,18 +145,43 @@ download_font()
 # 側邊欄
 with st.sidebar:
     st.header("⚙️ 參數設定")
+    
+    # 1. 金鑰輸入 (安全版)
     gemini_key_input = st.text_input("Gemini API Key (若已在雲端設定可留空)", type="password")
     pexels_key_input = st.text_input("Pexels API Key (若已在雲端設定可留空)", type="password")
     
+    # 判斷使用哪把鑰匙
     gemini_key = gemini_key_input if gemini_key_input else st.secrets.get("GEMINI_KEY", "")
     pexels_key = pexels_key_input if pexels_key_input else st.secrets.get("PEXELS_KEY", "")
     
+    # 【回歸功能】顯示金鑰狀態
+    if st.secrets.get("GEMINI_KEY") and not gemini_key_input:
+        st.caption("✅ 已啟用雲端金鑰 (Gemini)")
+    if st.secrets.get("PEXELS_KEY") and not pexels_key_input:
+        st.caption("✅ 已啟用雲端金鑰 (Pexels)")
+        
+    st.divider()
+    
+    # 2. 配音設定
     voice_option = st.selectbox("配音員", ("女聲 - 曉臻", "男聲 - 雲哲"))
     voice_role = "zh-TW-HsiaoChenNeural" if "女聲" in voice_option else "zh-TW-YunJheNeural"
-    speech_rate = st.slider("語速", 0.5, 2.0, 1.0, 0.1)
+    speech_rate = st.slider("語速調整 (1.0 為正常)", 0.5, 2.0, 1.0, 0.1)
     
-    # 時間設定
-    duration = st.slider("影片長度", 30, 180, 60)
+    # 【回歸功能】試聽按鈕
+    if st.button("🔊 試聽目前語音"):
+        preview_file = "preview.mp3"
+        with st.spinner("生成試聽中..."):
+            if run_tts("這是一個語音試聽測試，您覺得這個速度可以嗎？", preview_file, voice_role, speech_rate):
+                st.audio(preview_file)
+            else:
+                st.error("試聽生成失敗，請稍後再試")
+    
+    st.divider()
+    
+    # 3. 時間設定 (【回歸功能】解鎖到 300 秒)
+    duration = st.slider("影片目標長度 (秒)", 30, 300, 60, 10)
+    if duration > 120:
+        st.caption("⚠️ 提醒：影片超過 2 分鐘，雲端生成可能會需要較長時間，請耐心等候。")
 
 # 主畫面
 topic = st.text_input("💡 請輸入影片主題", placeholder="例如：為什麼貓咪喜歡紙箱？")
@@ -168,7 +197,7 @@ if st.button("🚀 開始生成影片", type="primary"):
             # 1. 生成劇本
             script_data = generate_script_from_ai(gemini_key, topic, duration)
             if not script_data:
-                status.update(label="❌ 劇本生成失敗 (Quota Exceeded?)", state="error")
+                status.update(label="❌ 劇本生成失敗 (可能額度不足)", state="error")
                 st.stop()
             
             status.write(f"✅ 劇本完成！共 {len(script_data)} 個分鏡")
@@ -179,19 +208,18 @@ if st.button("🚀 開始生成影片", type="primary"):
             for i, data in enumerate(script_data):
                 status.write(f"正在製作第 {i+1}/{len(script_data)} 個片段: {data['text'][:10]}...")
                 
-                # 處理檔名
                 safe_kw = "".join([c for c in data['keyword'] if c.isalnum()])
                 v_file = f"video_{safe_kw}.mp4"
                 a_file = f"temp_{i}.mp3"
                 
-                # 下載 & 配音
+                # 下載素材 (若失敗使用備用)
                 if not download_video(pexels_key, data['keyword'], v_file):
                     if not download_video(pexels_key, "Abstract", "video_fallback.mp4"):
                         continue
                     v_file = "video_fallback.mp4"
                 
                 try:
-                    # 執行 TTS
+                    # TTS
                     run_tts(data['text'], a_file, voice_role, speech_rate)
                     
                     # 剪輯
@@ -204,12 +232,13 @@ if st.button("🚀 開始生成影片", type="primary"):
                         v_clip = v_clip.subclip(0, a_clip.duration)
                     
                     v_clip = v_clip.set_audio(a_clip)
+                    # 字幕
                     txt_clip = ImageClip(create_text_image(data['text'], 1080, 1920)).set_duration(a_clip.duration)
                     
                     clips.append(CompositeVideoClip([v_clip, txt_clip]))
                     
                 except Exception as e:
-                    st.error(f"製作片段 {i+1} 失敗: {e}")
+                    print(f"Error clip {i}: {e}")
                 
                 progress_bar.progress((i + 1) / len(script_data))
             
@@ -222,6 +251,11 @@ if st.button("🚀 開始生成影片", type="primary"):
                 
                 status.update(label="✨ 製作完成！", state="complete")
                 st.video(output_name)
+                
+                # 下載按鈕
+                with open(output_name, "rb") as file:
+                    st.download_button(label="⬇️ 下載影片", data=file, file_name=output_name, mime="video/mp4")
+                    
             else:
                 status.update(label="❌ 製作失敗：沒有生成任何有效片段", state="error")
                 
