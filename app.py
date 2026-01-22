@@ -41,7 +41,14 @@ def generate_script_from_ai(api_key, topic, duration_sec):
     est_sentences = int(int(duration_sec) / 4.5)
     if est_sentences < 3: est_sentences = 3
     
-    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-pro']
+    models_to_try = [
+        'gemini-2.0-flash', 
+        'gemini-flash-latest', 
+        'gemini-pro-latest', 
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash-latest'
+
+        ]
     
     for model_name in models_to_try:
         try:
