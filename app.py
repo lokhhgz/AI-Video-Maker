@@ -12,7 +12,7 @@ import numpy as np
 import importlib.metadata
 
 # ================= 雲端設定區 =================
-st.set_page_config(page_title="AI 短影音工廠 (保底版)", page_icon="🛡️")
+st.set_page_config(page_title="AI 短影音工廠 (無敵版)", page_icon="🛡️")
 
 # 📥 自動下載中文字體
 def download_font():
@@ -40,11 +40,7 @@ def generate_script_from_ai(api_key, topic, duration_sec):
     if est_sentences < 3: est_sentences = 3
     
     # 使用你帳號裡有的模型
-    models_to_try = [
-        'gemini-flash-latest', 
-        'gemini-2.0-flash', 
-        'gemini-pro-latest'
-    ]
+    models_to_try = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-pro-latest']
     
     for model_name in models_to_try:
         try:
@@ -127,7 +123,7 @@ def create_text_image(text, width, height):
     return np.array(img)
 
 # --- 主程式 ---
-st.title("🛡️ AI 短影音工廠 (保底版)")
+st.title("🛡️ AI 短影音工廠 (無敵版)")
 download_font()
 
 with st.sidebar:
@@ -170,43 +166,51 @@ if st.button("🚀 生成影片", type="primary"):
         download_video(pexels_key, data['keyword'], v_file)
         run_tts(data['text'], a_file, voice_role, speech_rate)
         
+        # === 🛡️ 這裡是真正的防護罩 ===
         try:
-            # 嘗試讀取音訊
+            # 🛡️ 檢查聲音
+            if not os.path.exists(a_file) or os.path.getsize(a_file) < 100:
+                print(f"⚠️ 跳過片段 {i}: 聲音檔損毀")
+                continue # 直接跳過這一句，不讓程式崩潰！
+
             a_clip = AudioFileClip(a_file)
             
-            # 【關鍵修改】嘗試讀取影片，失敗就用黑底
+            # 🛡️ 檢查影片
             try:
                 if os.path.exists(v_file) and os.path.getsize(v_file) > 1000:
                     v_clip = VideoFileClip(v_file).resize(newsize=(1080, 1920))
-                    # 如果影片比聲音短，就循環
                     if v_clip.duration < a_clip.duration:
                         v_clip = v_clip.loop(duration=a_clip.duration)
                     else:
                         v_clip = v_clip.subclip(0, a_clip.duration)
                 else:
-                    raise Exception("File empty")
-            except Exception as e:
-                # 🟡 如果影片壞掉，顯示警告並用黑色背景取代
-                st.warning(f"⚠️ 片段 {i+1} 影片讀取失敗 ({e})，改用純色背景保底。")
+                    raise Exception("File bad")
+            except:
+                # 影片壞了就用黑畫面
                 v_clip = ColorClip(size=(1080, 1920), color=(0,0,0), duration=a_clip.duration)
             
-            # 合成音訊與字幕
+            # 合成
             v_clip = v_clip.set_audio(a_clip)
             txt_clip = ImageClip(create_text_image(data['text'], 1080, 1920)).set_duration(a_clip.duration)
             clips.append(CompositeVideoClip([v_clip, txt_clip]))
             
         except Exception as e:
-            st.error(f"❌ 嚴重錯誤: {e}")
+            print(f"❌ 片段錯誤: {e}")
+            # 這裡不會用 st.error 暫停，而是默默記錄並繼續下一個片段
         
         progress_bar.progress((i + 1) / len(script_data))
     
+    # 3. 最終合成
     if clips:
         status.write("🎬 正在合成最終影片...")
-        final = concatenate_videoclips(clips)
-        output_name = f"result_{random.randint(1000,9999)}.mp4"
-        final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
-        status.update(label="✨ 大功告成！", state="complete")
-        st.balloons()
-        st.video(output_name)
+        try:
+            final = concatenate_videoclips(clips)
+            output_name = f"result_{random.randint(1000,9999)}.mp4"
+            final.write_videofile(output_name, fps=24, codec='libx264', audio_codec='aac')
+            status.update(label="✨ 大功告成！", state="complete")
+            st.balloons()
+            st.video(output_name)
+        except Exception as e:
+             st.error(f"合成失敗: {e}")
     else:
-        status.update(label="❌ 製作失敗", state="error")
+        status.update(label="❌ 所有片段都失敗了，請檢查 Pexels Key 或網路", state="error")
